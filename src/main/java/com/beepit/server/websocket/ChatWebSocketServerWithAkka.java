@@ -3,12 +3,11 @@ package com.beepit.server.websocket;
 import akka.actor.typed.ActorRef;
 import akka.actor.typed.javadsl.AskPattern;
 import com.beepit.server.actor.ActorSystemProvider;
-import com.beepit.server.actor.ChatRoomActor;
-import com.beepit.server.actor.ConversationManagerActor;
-import com.beepit.server.domain.model.Conversation;
-import com.beepit.server.domain.model.Message;
+import com.beepit.server.domain.command.ConversationManagerCommand.*;
+import com.beepit.server.domain.response.ConversationManagerResponse;
+import com.beepit.server.domain.response.ConversationManagerResponse.*;
 import com.beepit.server.domain.model.PrivateMessage;
-import com.beepit.server.domain.model.UserSession;
+import com.beepit.server.service.RateLimiterService;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.serde.ObjectMapper;
 import io.micronaut.websocket.WebSocketBroadcaster;
@@ -17,184 +16,280 @@ import io.micronaut.websocket.annotation.*;
 import jakarta.inject.Inject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import reactor.core.publisher.Mono;
 
-import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 @ServerWebSocket("/ws/chat/{roomId}")
 public class ChatWebSocketServerWithAkka {
     
     private static final Logger LOG = LoggerFactory.getLogger(ChatWebSocketServerWithAkka.class);
+    private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(3);
+    private static final Duration FAST_TIMEOUT = Duration.ofSeconds(2);
     
     private final WebSocketBroadcaster broadcaster;
     private final ActorSystemProvider actorSystemProvider;
     private final ObjectMapper objectMapper;
-    private final Map<String, UserSessionInfo> sessions = new ConcurrentHashMap<>();
+    private final RateLimiterService rateLimiterService;
+    
+    // Mapa optimizado: userId -> lista de sesiones
+    private final Map<String, List<UserSessionInfo>> userSessions = new ConcurrentHashMap<>();
+    private final Map<String, UserSessionInfo> sessionById = new ConcurrentHashMap<>();
     
     @Inject
     public ChatWebSocketServerWithAkka(
             WebSocketBroadcaster broadcaster,
             ActorSystemProvider actorSystemProvider,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            RateLimiterService rateLimiterService) {
         this.broadcaster = broadcaster;
         this.actorSystemProvider = actorSystemProvider;
         this.objectMapper = objectMapper;
+        this.rateLimiterService = rateLimiterService;
     }
     
     @OnOpen
     public void onOpen(String roomId, WebSocketSession session, HttpRequest<?> request) {
-        String username = request.getParameters()
-            .getFirst("username")
-            .orElse("Anonymous-" + session.getId().substring(0, 8));
+        String userId = extractUserId(request, session);
+        String username = extractUsername(request, session);
+        String otherUserId = parseOtherUserId(roomId, userId);
         
-        String userId = request.getParameters()
-            .getFirst("userId")
-            .orElse(username);
-            
-        LOG.info("WebSocket abierto: room={}, username={}, userId={}, session={}", roomId, username, userId, session.getId());
+        MDC.put("userId", userId);
+        MDC.put("sessionId", session.getId());
         
-        // Parse room ID to get participant IDs (format: userId1_userId2)
-        String[] participants = roomId.split("_");
-        String otherUserId = participants[0].equals(userId) ? participants[1] : participants[0];
+        LOG.info("WebSocket abierto: room={}, username={}, userId={}", roomId, username, userId);
         
-        sessions.put(session.getId(), new UserSessionInfo(session, username, userId, roomId, otherUserId));
+        registerSession(session, username, userId, roomId, otherUserId);
+        loadAndSendHistory(session, userId, otherUserId);
         
-        // Load conversation history asynchronously
-        Mono.fromCompletionStage(
-            AskPattern.ask(
-                actorSystemProvider.getConversationManagerActor(),
-                (ActorRef<ConversationManagerActor.Response> replyTo) -> 
-                    new ConversationManagerActor.GetConversation(userId, otherUserId, replyTo),
-                Duration.ofSeconds(3),
-                actorSystemProvider.getConversationManagerScheduler()
-            )
-        ).subscribe(response -> {
-            LOG.info("GetConversation response for {}->{}: {}", userId, otherUserId, response.getClass().getSimpleName());
-            
-            if (response instanceof ConversationManagerActor.ConversationFound found) {
-                LOG.info("Conversation found with {} messages", found.conversation().messages().size());
-                try {
-                    // Send conversation history to the client
-                    String historyJson = objectMapper.writeValueAsString(Map.of(
-                        "type", "history",
-                        "messages", found.conversation().messages()
-                    ));
-                    broadcaster.broadcastSync(historyJson, s -> s.equals(session));
-                    LOG.info("History sent to session {}", session.getId());
-                } catch (Exception e) {
-                    LOG.error("Error serializing history", e);
-                }
-            } else {
-                // No previous conversation
-                LOG.info("No conversation found between {} and {}", userId, otherUserId);
-                try {
-                    String emptyHistory = "{\"type\":\"history\",\"messages\":[]}";
-                    broadcaster.broadcastSync(emptyHistory, s -> s.equals(session));
-                } catch (Exception e) {
-                    LOG.error("Error sending empty history", e);
-                }
-            }
-        }, error -> {
-            LOG.error("Error loading conversation", error);
-        });
+        MDC.clear();
     }
     
     @OnMessage
     public Mono<String> onMessage(String roomId, String messageText, WebSocketSession session) {
-        LOG.info("Mensaje recibido: room={}, message={}", roomId, messageText);
-        
-        UserSessionInfo sessionInfo = sessions.get(session.getId());
+        UserSessionInfo sessionInfo = sessionById.get(session.getId());
         if (sessionInfo == null) {
-            return Mono.just("{\"error\":\"Session not found\"}");
+            LOG.warn("Mensaje de sesión no registrada: {}", session.getId());
+            return Mono.just(errorResponse("Session not found"));
+        }
+        
+        MDC.put("userId", sessionInfo.userId);
+        MDC.put("sessionId", session.getId());
+        
+        // Rate limiting
+        if (!rateLimiterService.tryAcquire(sessionInfo.userId)) {
+            LOG.warn("Rate limit excedido para usuario: {}", sessionInfo.userId);
+            MDC.clear();
+            return Mono.just(errorResponse("Rate limit exceeded"));
         }
         
         try {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> data = objectMapper.readValue(messageText, Map.class);
-            String content = (String) data.get("content");
+            String content = extractMessageContent(messageText);
+            LOG.debug("Procesando mensaje de {} a {}: {}", sessionInfo.userId, sessionInfo.otherUserId, content);
             
-            // Send private message through ConversationManagerActor
-            LOG.info("Sending message from {} to {}: {}", sessionInfo.userId, sessionInfo.otherUserId, content);
-            
-            return Mono.fromCompletionStage(
-                AskPattern.ask(
-                    actorSystemProvider.getConversationManagerActor(),
-                    (ActorRef<ConversationManagerActor.Response> replyTo) ->
-                        new ConversationManagerActor.SendPrivateMessage(
-                            sessionInfo.userId,
-                            sessionInfo.otherUserId,
-                            content,
-                            replyTo
-                        ),
-                    Duration.ofSeconds(3),
-                    actorSystemProvider.getConversationManagerScheduler()
-                )
-            ).map(response -> {
-                LOG.info("SendPrivateMessage response: {}", response.getClass().getSimpleName());
-                
-                if (response instanceof ConversationManagerActor.MessageSent sent) {
-                    LOG.info("Message saved with ID: {}", sent.message().messageId());
-                    
-                    // Broadcast to both users in the conversation
-                    broadcastPrivateMessage(roomId, sent.message(), sessionInfo.userId);
-                    
-                    try {
-                        return objectMapper.writeValueAsString(Map.of(
-                            "type", "message_sent",
-                            "messageId", sent.message().messageId()
-                        ));
-                    } catch (Exception e) {
-                        return "{}";
-                    }
-                }
-                return "{}";
-            });
-            
+            return sendPrivateMessage(sessionInfo, content, roomId);
         } catch (Exception e) {
-            LOG.error("Error processing message", e);
-            return Mono.just("{\"error\":\"" + e.getMessage() + "\"}");
+            LOG.error("Error procesando mensaje", e);
+            return Mono.just(errorResponse(e.getMessage()));
+        } finally {
+            MDC.clear();
         }
     }
     
     @OnClose
-    public Mono<Void> onClose(String roomId, WebSocketSession session) {
-        LOG.info("WebSocket cerrado: room={}, session={}", roomId, session.getId());
-        sessions.remove(session.getId());
-        return Mono.empty();
+    public void onClose(String roomId, WebSocketSession session) {
+        UserSessionInfo sessionInfo = sessionById.remove(session.getId());
+        if (sessionInfo != null) {
+            unregisterSession(sessionInfo);
+            LOG.info("WebSocket cerrado: room={}, userId={}", roomId, sessionInfo.userId);
+        }
     }
     
     @OnError
-    public Mono<Void> onError(String roomId, WebSocketSession session, Throwable error) {
-        LOG.error("Error en WebSocket: room={}, session={}", roomId, session.getId(), error);
-        return Mono.empty();
+    public void onError(String roomId, WebSocketSession session, Throwable error) {
+        UserSessionInfo sessionInfo = sessionById.get(session.getId());
+        if (sessionInfo != null) {
+            MDC.put("userId", sessionInfo.userId);
+            MDC.put("sessionId", session.getId());
+        }
+        LOG.error("Error en WebSocket: room={}", roomId, error);
+        MDC.clear();
     }
     
-    private void broadcastPrivateMessage(String roomId, PrivateMessage message, String senderId) {
+    // Métodos privados para separar responsabilidades
+    
+    private String extractUserId(HttpRequest<?> request, WebSocketSession session) {
+        return request.getParameters()
+            .getFirst("userId")
+            .orElse("anonymous-" + session.getId().substring(0, 8));
+    }
+    
+    private String extractUsername(HttpRequest<?> request, WebSocketSession session) {
+        return request.getParameters()
+            .getFirst("username")
+            .orElse("Anonymous-" + session.getId().substring(0, 8));
+    }
+    
+    private String parseOtherUserId(String roomId, String userId) {
+        String[] participants = roomId.split("_");
+        return participants[0].equals(userId) ? participants[1] : participants[0];
+    }
+    
+    private void registerSession(WebSocketSession session, String username, 
+                                 String userId, String roomId, String otherUserId) {
+        UserSessionInfo info = new UserSessionInfo(session, username, userId, roomId, otherUserId);
+        sessionById.put(session.getId(), info);
+        
+        // Agregar a la lista de sesiones del usuario para broadcast optimizado
+        userSessions.compute(userId, (key, sessions) -> {
+            if (sessions == null) {
+                sessions = new java.util.concurrent.CopyOnWriteArrayList<>();
+            }
+            sessions.add(info);
+            return sessions;
+        });
+        
+        userSessions.compute(otherUserId, (key, sessions) -> {
+            if (sessions == null) {
+                sessions = new java.util.concurrent.CopyOnWriteArrayList<>();
+            }
+            sessions.add(info);
+            return sessions;
+        });
+    }
+    
+    private void unregisterSession(UserSessionInfo info) {
+        userSessions.computeIfPresent(info.userId, (key, sessions) -> {
+            sessions.remove(info);
+            return sessions.isEmpty() ? null : sessions;
+        });
+        
+        userSessions.computeIfPresent(info.otherUserId, (key, sessions) -> {
+            sessions.remove(info);
+            return sessions.isEmpty() ? null : sessions;
+        });
+        
+        rateLimiterService.cleanup(info.userId);
+    }
+    
+    private void loadAndSendHistory(WebSocketSession session, String userId, String otherUserId) {
+        Mono.fromCompletionStage(
+            AskPattern.ask(
+                actorSystemProvider.getConversationManagerActor(),
+                (ActorRef<ConversationManagerResponse> replyTo) -> 
+                    new GetConversation(userId, otherUserId, replyTo),
+                FAST_TIMEOUT,
+                actorSystemProvider.getScheduler()
+            )
+        ).subscribe(
+            response -> handleHistoryResponse(response, session, userId, otherUserId),
+            error -> LOG.error("Error cargando historial para {}->{}", userId, otherUserId, error)
+        );
+    }
+    
+    private void handleHistoryResponse(ConversationManagerResponse response, 
+                                      WebSocketSession session, String userId, String otherUserId) {
+        try {
+            String historyJson;
+            if (response instanceof ConversationFound found) {
+                LOG.debug("Historial encontrado: {} mensajes", found.conversation().messages().size());
+                historyJson = objectMapper.writeValueAsString(Map.of(
+                    "type", "history",
+                    "messages", found.conversation().messages()
+                ));
+            } else {
+                LOG.debug("Sin historial previo entre {} y {}", userId, otherUserId);
+                historyJson = "{\"type\":\"history\",\"messages\":[]}";
+            }
+            broadcaster.broadcastSync(historyJson, s -> s.equals(session));
+        } catch (Exception e) {
+            LOG.error("Error enviando historial", e);
+        }
+    }
+    
+    private String extractMessageContent(String messageText) throws Exception {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> data = objectMapper.readValue(messageText, Map.class);
+        String content = (String) data.get("content");
+        if (content == null || content.trim().isEmpty()) {
+            throw new IllegalArgumentException("Message content cannot be empty");
+        }
+        if (content.length() > 5000) {
+            throw new IllegalArgumentException("Message too long (max 5000 characters)");
+        }
+        return content;
+    }
+    
+    private Mono<String> sendPrivateMessage(UserSessionInfo sessionInfo, String content, String roomId) {
+        return Mono.fromCompletionStage(
+            AskPattern.ask(
+                actorSystemProvider.getConversationManagerActor(),
+                (ActorRef<ConversationManagerResponse> replyTo) ->
+                    new SendPrivateMessage(
+                        sessionInfo.userId,
+                        sessionInfo.otherUserId,
+                        content,
+                        replyTo
+                    ),
+                DEFAULT_TIMEOUT,
+                actorSystemProvider.getScheduler()
+            )
+        ).map(response -> {
+            if (response instanceof MessageSent sent) {
+                LOG.debug("Mensaje guardado: {}", sent.message().messageId());
+                broadcastToConversation(roomId, sent.message());
+                return successResponse(sent.message().messageId());
+            }
+            return errorResponse("Failed to send message");
+        });
+    }
+    
+    private void broadcastToConversation(String roomId, PrivateMessage message) {
         try {
             String messageJson = objectMapper.writeValueAsString(Map.of(
                 "type", "message",
                 "messageId", message.messageId(),
-                "sender", senderId,
+                "senderId", message.senderId(),
+                "recipientId", message.recipientId(),
                 "content", message.content(),
                 "timestamp", message.timestamp()
             ));
             
-            // Broadcast to all sessions in this conversation room
-            sessions.values().stream()
+            // Broadcast optimizado: solo a sesiones de usuarios en esta conversación
+            List<WebSocketSession> targetSessions = sessionById.values().stream()
                 .filter(info -> info.roomId.equals(roomId))
-                .forEach(info -> {
-                    try {
-                        broadcaster.broadcastSync(messageJson, s -> s.equals(info.session));
-                    } catch (Exception e) {
-                        LOG.error("Error broadcasting to session", e);
-                    }
-                });
+                .map(info -> info.session)
+                .collect(Collectors.toList());
+            
+            for (WebSocketSession session : targetSessions) {
+                broadcaster.broadcastSync(messageJson, s -> s.equals(session));
+            }
         } catch (Exception e) {
-            LOG.error("Error broadcasting message", e);
+            LOG.error("Error broadcasting mensaje", e);
+        }
+    }
+    
+    private String successResponse(String messageId) {
+        try {
+            return objectMapper.writeValueAsString(Map.of(
+                "type", "message_sent",
+                "messageId", messageId
+            ));
+        } catch (Exception e) {
+            return "{\"type\":\"message_sent\"}";
+        }
+    }
+    
+    private String errorResponse(String message) {
+        try {
+            return objectMapper.writeValueAsString(Map.of("error", message));
+        } catch (Exception e) {
+            return "{\"error\":\"" + message + "\"}";
         }
     }
     

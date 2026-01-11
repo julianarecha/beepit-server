@@ -2,15 +2,21 @@ package com.beepit.server.controller;
 
 import akka.actor.typed.javadsl.AskPattern;
 import com.beepit.server.actor.ActorSystemProvider;
-import com.beepit.server.actor.ConversationManagerActor;
-import com.beepit.server.actor.UserManagerActor;
+import com.beepit.server.domain.command.UserManagerCommand.*;
+import com.beepit.server.domain.command.ConversationManagerCommand.*;
+import com.beepit.server.domain.response.UserManagerResponse;
+import com.beepit.server.domain.response.UserManagerResponse.*;
+import com.beepit.server.domain.response.ConversationManagerResponse;
+import com.beepit.server.domain.response.ConversationManagerResponse.*;
 import com.beepit.server.domain.model.AppUser;
 import com.beepit.server.domain.model.Contact;
-import com.beepit.server.domain.model.Conversation;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.annotation.*;
 import io.micronaut.serde.annotation.Serdeable;
 import jakarta.inject.Inject;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
@@ -28,23 +34,20 @@ public class AuthController {
     }
 
     @Post("/register")
-    public Mono<HttpResponse<?>> register(@Body RegisterRequest request) {
+    public Mono<HttpResponse<?>> register(@Valid @Body RegisterRequest request) {
         return Mono.fromCompletionStage(
             AskPattern.ask(
                 actorSystemProvider.getUserManagerActor(),
-                (akka.actor.typed.ActorRef<UserManagerActor.Response> replyTo) -> 
-                    new UserManagerActor.RegisterUser(request.username, request.password, replyTo),
+                (akka.actor.typed.ActorRef<UserManagerResponse> replyTo) -> 
+                    new RegisterUser(request.username, request.password, replyTo),
                 Duration.ofSeconds(3),
-                actorSystemProvider.getUserManagerScheduler()
+                actorSystemProvider.getScheduler()
             )
         ).map(response -> {
-            if (response instanceof UserManagerActor.UserRegistered registered) {
-                return HttpResponse.ok(new AuthResponse(
-                    registered.user().userId(),
-                    registered.user().username(),
-                    "User registered successfully"
-                ));
-            } else if (response instanceof UserManagerActor.ErrorResponse error) {
+            if (response instanceof UserRegistered registered) {
+                // Devolver el objeto AppUser completo
+                return HttpResponse.ok(registered.user());
+            } else if (response instanceof UserManagerResponse.ErrorResponse error) {
                 return HttpResponse.badRequest(new ErrorDTO(error.message()));
             }
             return HttpResponse.serverError(new ErrorDTO("Unknown error"));
@@ -52,23 +55,20 @@ public class AuthController {
     }
 
     @Post("/login")
-    public Mono<HttpResponse<?>> login(@Body LoginRequest request) {
+    public Mono<HttpResponse<?>> login(@Valid @Body LoginRequest request) {
         return Mono.fromCompletionStage(
             AskPattern.ask(
                 actorSystemProvider.getUserManagerActor(),
-                (akka.actor.typed.ActorRef<UserManagerActor.Response> replyTo) -> 
-                    new UserManagerActor.LoginUser(request.username, request.password, replyTo),
+                (akka.actor.typed.ActorRef<UserManagerResponse> replyTo) -> 
+                    new LoginUser(request.username, request.password, replyTo),
                 Duration.ofSeconds(3),
-                actorSystemProvider.getUserManagerScheduler()
+                actorSystemProvider.getScheduler()
             )
         ).map(response -> {
-            if (response instanceof UserManagerActor.UserLoggedIn loggedIn) {
-                return HttpResponse.ok(new AuthResponse(
-                    loggedIn.user().userId(),
-                    loggedIn.user().username(),
-                    "Login successful"
-                ));
-            } else if (response instanceof UserManagerActor.ErrorResponse error) {
+            if (response instanceof UserLoggedIn loggedIn) {
+                // Devolver el objeto AppUser completo que espera el frontend
+                return HttpResponse.ok(loggedIn.user());
+            } else if (response instanceof UserManagerResponse.ErrorResponse error) {
                 return HttpResponse.unauthorized().body(new ErrorDTO(error.message()));
             }
             return HttpResponse.serverError(new ErrorDTO("Unknown error"));
@@ -80,15 +80,15 @@ public class AuthController {
         return Mono.fromCompletionStage(
             AskPattern.ask(
                 actorSystemProvider.getUserManagerActor(),
-                (akka.actor.typed.ActorRef<UserManagerActor.Response> replyTo) -> 
-                    new UserManagerActor.GetContacts(userId, replyTo),
-                Duration.ofSeconds(3),
-                actorSystemProvider.getUserManagerScheduler()
+                (akka.actor.typed.ActorRef<UserManagerResponse> replyTo) -> 
+                    new GetContacts(userId, replyTo),
+                Duration.ofSeconds(2),
+                actorSystemProvider.getScheduler()
             )
         ).map(response -> {
-            if (response instanceof UserManagerActor.ContactList contactList) {
+            if (response instanceof ContactList contactList) {
                 return HttpResponse.ok(contactList.contacts());
-            } else if (response instanceof UserManagerActor.ErrorResponse error) {
+            } else if (response instanceof UserManagerResponse.ErrorResponse error) {
                 return HttpResponse.notFound(new ErrorDTO(error.message()));
             }
             return HttpResponse.serverError(new ErrorDTO("Unknown error"));
@@ -100,13 +100,13 @@ public class AuthController {
         return Mono.fromCompletionStage(
             AskPattern.ask(
                 actorSystemProvider.getUserManagerActor(),
-                (akka.actor.typed.ActorRef<UserManagerActor.Response> replyTo) -> 
-                    new UserManagerActor.GetAllUsers(replyTo),
-                Duration.ofSeconds(3),
-                actorSystemProvider.getUserManagerScheduler()
+                (akka.actor.typed.ActorRef<UserManagerResponse> replyTo) -> 
+                    new GetAllUsers(replyTo),
+                Duration.ofSeconds(2),
+                actorSystemProvider.getScheduler()
             )
         ).map(response -> {
-            if (response instanceof UserManagerActor.AllUsers allUsers) {
+            if (response instanceof AllUsers allUsers) {
                 return HttpResponse.ok(allUsers.users());
             }
             return HttpResponse.serverError();
@@ -114,19 +114,19 @@ public class AuthController {
     }
 
     @Post("/contacts/add")
-    public Mono<HttpResponse<?>> addContact(@Body AddContactRequest request) {
+    public Mono<HttpResponse<?>> addContact(@Valid @Body AddContactRequest request) {
         return Mono.fromCompletionStage(
             AskPattern.ask(
                 actorSystemProvider.getUserManagerActor(),
-                (akka.actor.typed.ActorRef<UserManagerActor.Response> replyTo) -> 
-                    new UserManagerActor.AddContact(request.userId, request.contactId, replyTo),
-                Duration.ofSeconds(3),
-                actorSystemProvider.getUserManagerScheduler()
+                (akka.actor.typed.ActorRef<UserManagerResponse> replyTo) -> 
+                    new AddContact(request.userId, request.contactId, replyTo),
+                Duration.ofSeconds(2),
+                actorSystemProvider.getScheduler()
             )
         ).map(response -> {
-            if (response instanceof UserManagerActor.ContactAdded) {
+            if (response instanceof ContactAdded) {
                 return HttpResponse.ok(new MessageDTO("Contact added successfully"));
-            } else if (response instanceof UserManagerActor.ErrorResponse error) {
+            } else if (response instanceof UserManagerResponse.ErrorResponse error) {
                 return HttpResponse.badRequest(new ErrorDTO(error.message()));
             }
             return HttpResponse.serverError(new ErrorDTO("Unknown error"));
@@ -138,24 +138,24 @@ public class AuthController {
         return Mono.fromCompletionStage(
             AskPattern.ask(
                 actorSystemProvider.getConversationManagerActor(),
-                (akka.actor.typed.ActorRef<ConversationManagerActor.Response> replyTo) -> 
-                    new ConversationManagerActor.GetUserConversations(userId, replyTo),
-                Duration.ofSeconds(3),
-                actorSystemProvider.getConversationManagerScheduler()
+                (akka.actor.typed.ActorRef<ConversationManagerResponse> replyTo) -> 
+                    new GetUserConversations(userId, replyTo),
+                Duration.ofSeconds(5),
+                actorSystemProvider.getScheduler()
             )
         ).flatMap(response -> {
-            if (response instanceof ConversationManagerActor.ConversationsList found) {
+            if (response instanceof ConversationsList found) {
                 // Get user's contacts to identify non-contacts
                 return Mono.fromCompletionStage(
                     AskPattern.ask(
                         actorSystemProvider.getUserManagerActor(),
-                        (akka.actor.typed.ActorRef<UserManagerActor.Response> replyTo) -> 
-                            new UserManagerActor.GetContacts(userId, replyTo),
-                        Duration.ofSeconds(3),
-                        actorSystemProvider.getUserManagerScheduler()
+                        (akka.actor.typed.ActorRef<UserManagerResponse> replyTo) -> 
+                            new GetContacts(userId, replyTo),
+                        Duration.ofSeconds(2),
+                        actorSystemProvider.getScheduler()
                     )
                 ).map(contactsResponse -> {
-                    if (contactsResponse instanceof UserManagerActor.ContactList contactsFound) {
+                    if (contactsResponse instanceof ContactList contactsFound) {
                         List<String> contactIds = contactsFound.contacts().stream()
                             .map(Contact::userId)
                             .collect(Collectors.toList());
@@ -192,13 +192,30 @@ public class AuthController {
     }
 
     @Serdeable
-    public record RegisterRequest(String username, String password) {}
+    public record RegisterRequest(
+        @NotBlank(message = "Username is required")
+        @Size(min = 3, max = 20, message = "Username must be between 3 and 20 characters")
+        String username,
+        @NotBlank(message = "Password is required")
+        @Size(min = 6, message = "Password must be at least 6 characters")
+        String password
+    ) {}
 
     @Serdeable
-    public record LoginRequest(String username, String password) {}
+    public record LoginRequest(
+        @NotBlank(message = "Username is required")
+        String username,
+        @NotBlank(message = "Password is required")
+        String password
+    ) {}
 
     @Serdeable
-    public record AddContactRequest(String userId, String contactId) {}
+    public record AddContactRequest(
+        @NotBlank(message = "User ID is required")
+        String userId,
+        @NotBlank(message = "Contact ID is required")
+        String contactId
+    ) {}
 
     @Serdeable
     public record AuthResponse(String userId, String username, String message) {}

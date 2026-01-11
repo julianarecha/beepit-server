@@ -1,11 +1,14 @@
 package com.beepit.server.actor;
 
-import akka.actor.typed.ActorRef;
 import akka.actor.typed.Behavior;
 import akka.actor.typed.javadsl.AbstractBehavior;
 import akka.actor.typed.javadsl.ActorContext;
 import akka.actor.typed.javadsl.Behaviors;
 import akka.actor.typed.javadsl.Receive;
+import com.beepit.server.domain.command.ConversationManagerCommand;
+import com.beepit.server.domain.command.ConversationManagerCommand.*;
+import com.beepit.server.domain.response.ConversationManagerResponse;
+import com.beepit.server.domain.response.ConversationManagerResponse.*;
 import com.beepit.server.domain.model.Conversation;
 import com.beepit.server.domain.model.PrivateMessage;
 
@@ -13,39 +16,21 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class ConversationManagerActor extends AbstractBehavior<ConversationManagerActor.Command> {
-
-    public sealed interface Command {}
-    
-    public sealed interface Response {}
-    
-    // Commands
-    public record SendPrivateMessage(String senderId, String recipientId, String content, ActorRef<Response> replyTo) implements Command {}
-    public record GetConversation(String userId1, String userId2, ActorRef<Response> replyTo) implements Command {}
-    public record GetUserConversations(String userId, ActorRef<Response> replyTo) implements Command {}
-    public record MarkMessageDelivered(String messageId, ActorRef<Response> replyTo) implements Command {}
-    public record MarkMessageRead(String messageId, ActorRef<Response> replyTo) implements Command {}
-    
-    // Responses
-    public record MessageSent(PrivateMessage message) implements Response {}
-    public record ConversationFound(Conversation conversation) implements Response {}
-    public record ConversationsList(List<Conversation> conversations) implements Response {}
-    public record MessageUpdated(String messageId) implements Response {}
-    public record ErrorResponse(String message) implements Response {}
+public class ConversationManagerActor extends AbstractBehavior<ConversationManagerCommand> {
 
     private final Map<String, Conversation> conversations = new ConcurrentHashMap<>();
     private final Map<String, PrivateMessage> messagesById = new ConcurrentHashMap<>();
 
-    private ConversationManagerActor(ActorContext<Command> context) {
+    private ConversationManagerActor(ActorContext<ConversationManagerCommand> context) {
         super(context);
     }
 
-    public static Behavior<Command> create() {
+    public static Behavior<ConversationManagerCommand> create() {
         return Behaviors.setup(ConversationManagerActor::new);
     }
 
     @Override
-    public Receive<Command> createReceive() {
+    public Receive<ConversationManagerCommand> createReceive() {
         return newReceiveBuilder()
                 .onMessage(SendPrivateMessage.class, this::onSendPrivateMessage)
                 .onMessage(GetConversation.class, this::onGetConversation)
@@ -55,15 +40,15 @@ public class ConversationManagerActor extends AbstractBehavior<ConversationManag
                 .build();
     }
 
-    private Behavior<Command> onSendPrivateMessage(SendPrivateMessage cmd) {
-        PrivateMessage message = new PrivateMessage(cmd.senderId, cmd.recipientId, cmd.content);
+    private Behavior<ConversationManagerCommand> onSendPrivateMessage(SendPrivateMessage cmd) {
+        PrivateMessage message = new PrivateMessage(cmd.senderId(), cmd.recipientId(), cmd.content());
         messagesById.put(message.messageId(), message);
         
-        String conversationId = getConversationId(cmd.senderId, cmd.recipientId);
+        String conversationId = getConversationId(cmd.senderId(), cmd.recipientId());
         Conversation conversation = conversations.get(conversationId);
         
         if (conversation == null) {
-            List<String> participants = Arrays.asList(cmd.senderId, cmd.recipientId);
+            List<String> participants = Arrays.asList(cmd.senderId(), cmd.recipientId());
             List<PrivateMessage> messages = new ArrayList<>();
             messages.add(message);
             conversation = new Conversation(
@@ -86,38 +71,38 @@ public class ConversationManagerActor extends AbstractBehavior<ConversationManag
         }
         
         conversations.put(conversationId, conversation);
-        cmd.replyTo.tell(new MessageSent(message));
+        cmd.replyTo().tell(new MessageSent(message));
         return this;
     }
 
-    private Behavior<Command> onGetConversation(GetConversation cmd) {
-        String conversationId = getConversationId(cmd.userId1, cmd.userId2);
+    private Behavior<ConversationManagerCommand> onGetConversation(GetConversation cmd) {
+        String conversationId = getConversationId(cmd.userId1(), cmd.userId2());
         Conversation conversation = conversations.get(conversationId);
         
         if (conversation != null) {
-            cmd.replyTo.tell(new ConversationFound(conversation));
+            cmd.replyTo().tell(new ConversationFound(conversation));
         } else {
             // Crear conversación vacía
-            List<String> participants = Arrays.asList(cmd.userId1, cmd.userId2);
+            List<String> participants = Arrays.asList(cmd.userId1(), cmd.userId2());
             Conversation emptyConversation = new Conversation(conversationId, participants);
             conversations.put(conversationId, emptyConversation);
-            cmd.replyTo.tell(new ConversationFound(emptyConversation));
+            cmd.replyTo().tell(new ConversationFound(emptyConversation));
         }
         return this;
     }
 
-    private Behavior<Command> onGetUserConversations(GetUserConversations cmd) {
+    private Behavior<ConversationManagerCommand> onGetUserConversations(GetUserConversations cmd) {
         List<Conversation> userConversations = conversations.values().stream()
-                .filter(conv -> conv.participants().contains(cmd.userId))
+                .filter(conv -> conv.participants().contains(cmd.userId()))
                 .sorted((c1, c2) -> c2.lastMessageAt().compareTo(c1.lastMessageAt()))
                 .toList();
         
-        cmd.replyTo.tell(new ConversationsList(userConversations));
+        cmd.replyTo().tell(new ConversationsList(userConversations));
         return this;
     }
 
-    private Behavior<Command> onMarkMessageDelivered(MarkMessageDelivered cmd) {
-        PrivateMessage message = messagesById.get(cmd.messageId);
+    private Behavior<ConversationManagerCommand> onMarkMessageDelivered(MarkMessageDelivered cmd) {
+        PrivateMessage message = messagesById.get(cmd.messageId());
         if (message != null) {
             PrivateMessage updated = new PrivateMessage(
                 message.messageId(),
@@ -128,17 +113,17 @@ public class ConversationManagerActor extends AbstractBehavior<ConversationManag
                 true,
                 message.read()
             );
-            messagesById.put(cmd.messageId, updated);
+            messagesById.put(cmd.messageId(), updated);
             updateMessageInConversations(updated);
-            cmd.replyTo.tell(new MessageUpdated(cmd.messageId));
+            cmd.replyTo().tell(new MessageUpdated(cmd.messageId()));
         } else {
-            cmd.replyTo.tell(new ErrorResponse("Message not found"));
+            cmd.replyTo().tell(new ErrorResponse("Message not found"));
         }
         return this;
     }
 
-    private Behavior<Command> onMarkMessageRead(MarkMessageRead cmd) {
-        PrivateMessage message = messagesById.get(cmd.messageId);
+    private Behavior<ConversationManagerCommand> onMarkMessageRead(MarkMessageRead cmd) {
+        PrivateMessage message = messagesById.get(cmd.messageId());
         if (message != null) {
             PrivateMessage updated = new PrivateMessage(
                 message.messageId(),
@@ -149,11 +134,11 @@ public class ConversationManagerActor extends AbstractBehavior<ConversationManag
                 true,
                 true
             );
-            messagesById.put(cmd.messageId, updated);
+            messagesById.put(cmd.messageId(), updated);
             updateMessageInConversations(updated);
-            cmd.replyTo.tell(new MessageUpdated(cmd.messageId));
+            cmd.replyTo().tell(new MessageUpdated(cmd.messageId()));
         } else {
-            cmd.replyTo.tell(new ErrorResponse("Message not found"));
+            cmd.replyTo().tell(new ErrorResponse("Message not found"));
         }
         return this;
     }

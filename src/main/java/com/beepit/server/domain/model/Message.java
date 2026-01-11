@@ -24,11 +24,3 @@ public record Message(
         );
     }
 }
-
-@Serdeable
-enum MessageType {
-    TEXT,
-    IMAGE,
-    FILE,
-    SYSTEM
-}

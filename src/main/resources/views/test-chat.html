@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Beepit - Test Chat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            color: #e0e0e0;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        .sidebar {
+            width: 300px;
+            background: #1a1a1a;
+            border-right: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background: #FFD700;
+            color: #000;
+            padding: 20px;
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .login-form {
+            padding: 20px;
+            background: #252525;
+        }
+        .login-form input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #444;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            border-radius: 5px;
+        }
+        .login-form button {
+            width: 100%;
+            padding: 10px;
+            background: #FFD700;
+            color: #000;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .login-form button:hover {
+            background: #FFC700;
+        }
+        .user-info {
+            padding: 15px;
+            background: #252525;
+            border-bottom: 1px solid #333;
+        }
+        .contacts-header {
+            padding: 15px;
+            background: #1f1f1f;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .search-btn {
+            background: #FFD700;
+            color: #000;
+            border: none;
+            padding: 5px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .contacts-list {
+            flex: 1;
+            overflow-y: auto;
+        }
+        .contact-item {
+            padding: 15px;
+            border-bottom: 1px solid #333;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .contact-item:hover {
+            background: #252525;
+        }
+        .contact-item.active {
+            background: #2a2a2a;
+            border-left: 3px solid #FFD700;
+        }
+        .online-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #4CAF50;
+            display: inline-block;
+            margin-right: 10px;
+        }
+        .offline-indicator {
+            background: #666;
+        }
+        .pending-badge {
+            background: #FFD700;
+            color: #000;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #2d2d2d;
+        }
+        .chat-header {
+            padding: 20px;
+            background: #1a1a1a;
+            border-bottom: 1px solid #333;
+        }
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+        }
+        .message.own {
+            justify-content: flex-end;
+        }
+        .message-bubble {
+            max-width: 60%;
+            padding: 10px 15px;
+            border-radius: 15px;
+            background: #3a3a3a;
+        }
+        .message.own .message-bubble {
+            background: #FFD700;
+            color: #000;
+        }
+        .message-sender {
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 5px;
+        }
+        .message-time {
+            font-size: 11px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .input-area {
+            padding: 20px;
+            background: #1a1a1a;
+            border-top: 1px solid #333;
+            display: flex;
+            gap: 10px;
+        }
+        .input-area input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #444;
+            background: #2d2d2d;
+            color: #e0e0e0;
+            border-radius: 25px;
+        }
+        .input-area button {
+            padding: 12px 25px;
+            background: #FFD700;
+            color: #000;
+            border: none;
+            border-radius: 25px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .input-area button:hover {
+            background: #FFC700;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+        }
+        .modal-content {
+            background: #1a1a1a;
+            margin: 50px auto;
+            padding: 30px;
+            width: 90%;
+            max-width: 500px;
+            border-radius: 10px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .close-btn {
+            background: none;
+            border: none;
+            color: #e0e0e0;
+            font-size: 24px;
+            cursor: pointer;
+        }
+        .user-search {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 20px;
+            border: 1px solid #444;
+            background: #2d2d2d;
+            color: #e0e0e0;
+            border-radius: 5px;
+        }
+        .user-list-item {
+            padding: 15px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .add-btn, .chat-btn {
+            padding: 5px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        .add-btn {
+            background: #4CAF50;
+            color: white;
+        }
+        .chat-btn {
+            background: #FFD700;
+            color: #000;
+        }
+        .pending-item {
+            padding: 15px;
+            border-bottom: 1px solid #333;
+            background: #2d2d2d;
+        }
+        .pending-item:last-child {
+            border-bottom: none;
+        }
+        .pending-item > div:first-child {
+            margin-bottom: 10px;
+            color: #e0e0e0;
+        }
+        .hidden {
+            display: none;
+        }
+        .hint {
+            font-size: 12px;
+            color: #999;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <div class="header">Beepit</div>
+            
+            <div id="loginForm" class="login-form">
+                <input type="text" id="username" placeholder="Usuario">
+                <input type="password" id="password" placeholder="Contraseña">
+                <button onclick="login()">Iniciar Sesión</button>
+                <div class="hint">Usuarios: alice, bob, charlie, diana, eve (pass: password123)</div>
+            </div>
+            
+            <div id="userInfo" class="user-info hidden">
+                <div>Usuario: <strong id="currentUsername"></strong></div>
+                <div>ID: <span id="currentUserId"></span></div>
+            </div>
+            
+            <div id="contactsSection" class="hidden">
+                <div class="contacts-header">
+                    <span>Contactos</span>
+                    <div>
+                        <button id="pendingBtn" class="search-btn" onclick="openPendingModal()" style="display: none; margin-right: 5px;">
+                            📬 <span id="pendingCount">0</span>
+                        </button>
+                        <button class="search-btn" onclick="openSearchModal()">+ Buscar</button>
+                    </div>
+                </div>
+                <div id="contactsList" class="contacts-list"></div>
+            </div>
+        </div>
+        
+        <div class="chat-area">
+            <div class="chat-header">
+                <div id="chatTitle">Selecciona un contacto para chatear</div>
+            </div>
+            <div id="messagesContainer" class="messages-container"></div>
+            <div id="inputArea" class="input-area hidden">
+                <input type="text" id="messageInput" placeholder="Escribe un mensaje..." onkeypress="handleKeyPress(event)">
+                <button onclick="sendMessage()">Enviar</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="searchModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Buscar Usuarios</h2>
+                <button class="close-btn" onclick="closeSearchModal()">&times;</button>
+            </div>
+            <input type="text" class="user-search" id="userSearch" placeholder="Buscar por nombre..." oninput="searchUsers()">
+            <div id="usersList"></div>
+        </div>
+    </div>
+    
+    <div id="pendingModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Mensajes Pendientes</h2>
+                <button class="close-btn" onclick="closePendingModal()">&times;</button>
+            </div>
+            <div id="pendingList"></div>
+        </div>
+    </div>
+
+    <script th:inline="javascript">
+        const API_BASE = /*[[${apiBase}]]*/ 'http://localhost:8080';
+        const WS_BASE = /*[[${wsBase}]]*/ 'ws://localhost:8080';
+        
+        let currentUser = null;
+        let currentContact = null;
+        let socket = null;
+        let contacts = [];
+        let allUsers = [];
+
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            console.log('Intentando login con:', username);
+            console.log('URL:', `${API_BASE}/api/auth/login`);
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/login`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username, password})
+                });
+                
+                console.log('Response status:', response.status);
+                console.log('Response ok:', response.ok);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Login exitoso, datos recibidos:', data);
+                    currentUser = data;
+                    document.getElementById('loginForm').classList.add('hidden');
+                    document.getElementById('userInfo').classList.remove('hidden');
+                    document.getElementById('contactsSection').classList.remove('hidden');
+                    document.getElementById('currentUsername').textContent = data.username;
+                    document.getElementById('currentUserId').textContent = data.userId;
+                    loadContacts();
+                    startPendingMessagesPolling();
+                } else {
+                    const errorText = await response.text();
+                    console.error('Error response:', errorText);
+                    try {
+                        const error = JSON.parse(errorText);
+                        alert('Error: ' + (error.error || error.message || 'Unknown error'));
+                    } catch {
+                        alert('Error del servidor: ' + errorText);
+                    }
+                }
+            } catch (error) {
+                console.error('Error completo en login:', error);
+                console.error('Error stack:', error.stack);
+                alert('Error al conectar con el servidor. Verifica que el servidor esté corriendo en http://localhost:8080');
+            }
+        }
+
+        async function loadContacts() {
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/contacts/${currentUser.userId}`);
+                contacts = await response.json();
+                renderContacts();
+            } catch (error) {
+                console.error('Error cargando contactos:', error);
+            }
+        }
+
+        function renderContacts() {
+            const list = document.getElementById('contactsList');
+            list.innerHTML = contacts.map(contact => `
+                <div class="contact-item" onclick="openChat('${contact.userId}', '${contact.username}')">
+                    <div>
+                        <span class="online-indicator ${contact.online ? '' : 'offline-indicator'}"></span>
+                        ${contact.username}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function openSearchModal() {
+            document.getElementById('searchModal').style.display = 'block';
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/users`);
+                allUsers = await response.json();
+                renderUsersList(allUsers);
+            } catch (error) {
+                console.error('Error cargando usuarios:', error);
+            }
+        }
+
+        function closeSearchModal() {
+            document.getElementById('searchModal').style.display = 'none';
+        }
+
+        function searchUsers() {
+            const query = document.getElementById('userSearch').value.toLowerCase();
+            const filtered = allUsers.filter(u => 
+                u.username.toLowerCase().includes(query) && u.userId !== currentUser.userId
+            );
+            renderUsersList(filtered);
+        }
+
+        function renderUsersList(users) {
+            const list = document.getElementById('usersList');
+            list.innerHTML = users.map(user => {
+                const isContact = contacts.some(c => c.userId === user.userId);
+                return `
+                    <div class="user-list-item">
+                        <div>
+                            <span class="online-indicator ${user.online ? '' : 'offline-indicator'}"></span>
+                            ${user.username}
+                        </div>
+                        <div>
+                            ${isContact ? '<span style="color: #4CAF50;">Contacto</span>' : 
+                                `<button class="add-btn" onclick="addContact('${user.userId}')">+ Agregar</button>`}
+                            <button class="chat-btn" onclick="openChatFromSearch('${user.userId}', '${user.username}')">Chat</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function addContact(contactId) {
+            try {
+                await fetch(`${API_BASE}/api/auth/contacts/add`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({userId: currentUser.userId, contactId})
+                });
+                loadContacts();
+                openSearchModal();
+            } catch (error) {
+                console.error('Error agregando contacto:', error);
+            }
+        }
+
+        function openChatFromSearch(userId, username) {
+            closeSearchModal();
+            openChat(userId, username);
+        }
+
+        function openChat(contactId, contactName) {
+            if (socket) {
+                socket.close();
+            }
+            
+            currentContact = {userId: contactId, username: contactName};
+            document.getElementById('chatTitle').textContent = 'Chat con ' + contactName;
+            document.getElementById('messagesContainer').innerHTML = '';
+            document.getElementById('inputArea').classList.remove('hidden');
+            
+            const roomId = [currentUser.userId, contactId].sort().join('_');
+            socket = new WebSocket(`${WS_BASE}/ws/chat/${roomId}?userId=${currentUser.userId}&username=${currentUser.username}`);
+            
+            socket.onopen = () => console.log('WebSocket conectado');
+            
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'history') {
+                    console.log('Historial recibido:', data.messages.length);
+                    data.messages.forEach(msg => displayMessage(msg));
+                } else if (data.type === 'message') {
+                    displayMessage(data);
+                } else if (data.error) {
+                    alert('Error: ' + data.error);
+                }
+            };
+            
+            socket.onerror = (error) => console.error('WebSocket error:', error);
+            socket.onclose = () => console.log('WebSocket cerrado');
+        }
+
+        function displayMessage(msg) {
+            const container = document.getElementById('messagesContainer');
+            const isOwn = msg.senderId === currentUser.userId;
+            const time = new Date(msg.timestamp).toLocaleTimeString();
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message' + (isOwn ? ' own' : '');
+            messageDiv.innerHTML = `
+                <div class="message-bubble">
+                    ${!isOwn ? `<div class="message-sender">${currentContact.username}</div>` : ''}
+                    <div>${msg.content}</div>
+                    <div class="message-time">${time}</div>
+                </div>
+            `;
+            container.appendChild(messageDiv);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const content = input.value.trim();
+            if (content && socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({content}));
+                input.value = '';
+            }
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        async function checkPendingMessages() {
+            if (!currentUser) return;
+            
+            try {
+                console.log('Checking pending messages...');
+                const response = await fetch(`${API_BASE}/api/auth/conversations/${currentUser.userId}`);
+                const conversations = await response.json();
+                console.log('Conversations received:', conversations);
+                
+                const pending = conversations.filter(c => !c.isContact && c.unreadCount > 0);
+                console.log('Pending messages:', pending);
+                
+                if (pending.length > 0) {
+                    showPendingNotification(pending.length, pending);
+                } else {
+                    hidePendingNotification();
+                }
+            } catch (error) {
+                console.error('Error checking pending messages:', error);
+            }
+        }
+
+        let pendingMessages = [];
+
+        function showPendingNotification(count, messages) {
+            pendingMessages = messages;
+            const btn = document.getElementById('pendingBtn');
+            const countSpan = document.getElementById('pendingCount');
+            countSpan.textContent = count;
+            btn.style.display = 'inline-block';
+            console.log('Showing notification for', count, 'pending messages');
+        }
+
+        function hidePendingNotification() {
+            document.getElementById('pendingBtn').style.display = 'none';
+        }
+
+        async function openPendingModal() {
+            const modal = document.getElementById('pendingModal');
+            const list = document.getElementById('pendingList');
+            
+            list.innerHTML = '<div style="padding: 15px; color: #999;">Cargando...</div>';
+            
+            try {
+                // Obtener todos los usuarios para mapear IDs a nombres
+                const response = await fetch(`${API_BASE}/api/auth/users`);
+                const users = await response.json();
+                const userMap = {};
+                users.forEach(u => userMap[u.userId] = u.username);
+                
+                list.innerHTML = '';
+                pendingMessages.forEach(msg => {
+                    const username = userMap[msg.otherUserId] || msg.otherUserId;
+                    const div = document.createElement('div');
+                    div.className = 'pending-item';
+                    div.innerHTML = `
+                        <div><strong>${username}</strong>: ${msg.lastMessage || 'Nuevo mensaje'}</div>
+                        <div>
+                            <button class="add-btn" onclick="acceptAndChat('${msg.otherUserId}', '${username}')">✓ Aceptar y Chatear</button>
+                            <button class="chat-btn" onclick="justChat('${msg.otherUserId}', '${username}')">💬 Solo Chatear</button>
+                        </div>
+                    `;
+                    list.appendChild(div);
+                });
+            } catch (error) {
+                console.error('Error loading users for pending modal:', error);
+                list.innerHTML = '<div style="padding: 15px; color: #f44;">Error al cargar usuarios</div>';
+            }
+            
+            modal.style.display = 'block';
+        }
+
+        async function acceptAndChat(userId, username) {
+            try {
+                await fetch(`${API_BASE}/api/auth/contacts/add`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({userId: currentUser.userId, contactId: userId})
+                });
+                await loadContacts();
+                closePendingModal();
+                // Abrir chat con el usuario
+                openChat(userId, username);
+            } catch (error) {
+                console.error('Error adding contact:', error);
+                alert('Error al agregar contacto');
+            }
+        }
+
+        function justChat(userId, username) {
+            closePendingModal();
+            openChat(userId, username);
+        }
+
+        function startPendingMessagesPolling() {
+            setInterval(checkPendingMessages, 5000);
+        }
+
+        function closePendingModal() {
+            document.getElementById('pendingModal').style.display = 'none';
+        }
+    </script>
+</body>
+</html>

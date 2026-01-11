@@ -17,6 +17,9 @@ micronaut:
             - OPTIONS
   security:
     enabled: false
+  views:
+    thymeleaf:
+      enabled: true
 
 jackson:
   serialization:

@@ -1,11 +1,14 @@
 package com.beepit.server.actor;
 
-import akka.actor.typed.ActorRef;
 import akka.actor.typed.Behavior;
 import akka.actor.typed.javadsl.AbstractBehavior;
 import akka.actor.typed.javadsl.ActorContext;
 import akka.actor.typed.javadsl.Behaviors;
 import akka.actor.typed.javadsl.Receive;
+import com.beepit.server.domain.command.UserManagerCommand;
+import com.beepit.server.domain.command.UserManagerCommand.*;
+import com.beepit.server.domain.response.UserManagerResponse;
+import com.beepit.server.domain.response.UserManagerResponse.*;
 import com.beepit.server.domain.model.AppUser;
 import com.beepit.server.domain.model.Contact;
 
@@ -13,34 +16,12 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
-public class UserManagerActor extends AbstractBehavior<UserManagerActor.Command> {
-
-    public sealed interface Command {}
-    
-    public sealed interface Response {}
-    
-    // Commands
-    public record RegisterUser(String username, String password, ActorRef<Response> replyTo) implements Command {}
-    public record LoginUser(String username, String password, ActorRef<Response> replyTo) implements Command {}
-    public record GetUser(String userId, ActorRef<Response> replyTo) implements Command {}
-    public record GetAllUsers(ActorRef<Response> replyTo) implements Command {}
-    public record AddContact(String userId, String contactId, ActorRef<Response> replyTo) implements Command {}
-    public record GetContacts(String userId, ActorRef<Response> replyTo) implements Command {}
-    public record SetUserOnline(String userId, boolean online) implements Command {}
-    
-    // Responses
-    public record UserRegistered(AppUser user) implements Response {}
-    public record UserLoggedIn(AppUser user) implements Response {}
-    public record UserFound(AppUser user) implements Response {}
-    public record AllUsers(List<AppUser> users) implements Response {}
-    public record ContactAdded(String userId, String contactId) implements Response {}
-    public record ContactList(List<Contact> contacts) implements Response {}
-    public record ErrorResponse(String message) implements Response {}
+public class UserManagerActor extends AbstractBehavior<UserManagerCommand> {
 
     private final Map<String, AppUser> usersById = new ConcurrentHashMap<>();
     private final Map<String, String> userIdsByUsername = new ConcurrentHashMap<>();
 
-    private UserManagerActor(ActorContext<Command> context) {
+    private UserManagerActor(ActorContext<UserManagerCommand> context) {
         super(context);
         // Pre-crear usuarios de prueba
         createTestUsers();
@@ -57,12 +38,12 @@ public class UserManagerActor extends AbstractBehavior<UserManagerActor.Command>
         // No agregar contactos - todos empiezan sin contactos
     }
 
-    public static Behavior<Command> create() {
+    public static Behavior<UserManagerCommand> create() {
         return Behaviors.setup(UserManagerActor::new);
     }
 
     @Override
-    public Receive<Command> createReceive() {
+    public Receive<UserManagerCommand> createReceive() {
         return newReceiveBuilder()
                 .onMessage(RegisterUser.class, this::onRegisterUser)
                 .onMessage(LoginUser.class, this::onLoginUser)
@@ -74,34 +55,34 @@ public class UserManagerActor extends AbstractBehavior<UserManagerActor.Command>
                 .build();
     }
 
-    private Behavior<Command> onRegisterUser(RegisterUser cmd) {
-        String usernameLower = cmd.username.toLowerCase();
+    private Behavior<UserManagerCommand> onRegisterUser(RegisterUser cmd) {
+        String usernameLower = cmd.username().toLowerCase();
         
         if (userIdsByUsername.containsKey(usernameLower)) {
-            cmd.replyTo.tell(new ErrorResponse("Username already exists"));
+            cmd.replyTo().tell(new ErrorResponse("Username already exists"));
             return this;
         }
 
-        AppUser newUser = new AppUser(cmd.username, cmd.password);
+        AppUser newUser = new AppUser(cmd.username(), cmd.password());
         usersById.put(newUser.userId(), newUser);
         userIdsByUsername.put(usernameLower, newUser.userId());
         
-        cmd.replyTo.tell(new UserRegistered(newUser));
+        cmd.replyTo().tell(new UserRegistered(newUser));
         return this;
     }
 
-    private Behavior<Command> onLoginUser(LoginUser cmd) {
-        String usernameLower = cmd.username.toLowerCase();
+    private Behavior<UserManagerCommand> onLoginUser(LoginUser cmd) {
+        String usernameLower = cmd.username().toLowerCase();
         String userId = userIdsByUsername.get(usernameLower);
         
         if (userId == null) {
-            cmd.replyTo.tell(new ErrorResponse("User not found"));
+            cmd.replyTo().tell(new ErrorResponse("User not found"));
             return this;
         }
 
         AppUser user = usersById.get(userId);
-        if (!user.password().equals(cmd.password)) {
-            cmd.replyTo.tell(new ErrorResponse("Invalid password"));
+        if (!user.password().equals(cmd.password())) {
+            cmd.replyTo().tell(new ErrorResponse("Invalid password"));
             return this;
         }
 
@@ -116,41 +97,41 @@ public class UserManagerActor extends AbstractBehavior<UserManagerActor.Command>
         );
         usersById.put(userId, onlineUser);
         
-        cmd.replyTo.tell(new UserLoggedIn(onlineUser));
+        cmd.replyTo().tell(new UserLoggedIn(onlineUser));
         return this;
     }
 
-    private Behavior<Command> onGetUser(GetUser cmd) {
-        AppUser user = usersById.get(cmd.userId);
+    private Behavior<UserManagerCommand> onGetUser(GetUser cmd) {
+        AppUser user = usersById.get(cmd.userId());
         if (user != null) {
-            cmd.replyTo.tell(new UserFound(user));
+            cmd.replyTo().tell(new UserFound(user));
         } else {
-            cmd.replyTo.tell(new ErrorResponse("User not found"));
+            cmd.replyTo().tell(new ErrorResponse("User not found"));
         }
         return this;
     }
 
-    private Behavior<Command> onGetAllUsers(GetAllUsers cmd) {
-        cmd.replyTo.tell(new AllUsers(new ArrayList<>(usersById.values())));
+    private Behavior<UserManagerCommand> onGetAllUsers(GetAllUsers cmd) {
+        cmd.replyTo().tell(new AllUsers(new ArrayList<>(usersById.values())));
         return this;
     }
 
-    private Behavior<Command> onAddContact(AddContact cmd) {
-        AppUser user = usersById.get(cmd.userId);
-        AppUser contact = usersById.get(cmd.contactId);
+    private Behavior<UserManagerCommand> onAddContact(AddContact cmd) {
+        AppUser user = usersById.get(cmd.userId());
+        AppUser contact = usersById.get(cmd.contactId());
         
         if (user == null || contact == null) {
-            cmd.replyTo.tell(new ErrorResponse("User or contact not found"));
+            cmd.replyTo().tell(new ErrorResponse("User or contact not found"));
             return this;
         }
 
-        if (user.contactIds().contains(cmd.contactId)) {
-            cmd.replyTo.tell(new ErrorResponse("Contact already exists"));
+        if (user.contactIds().contains(cmd.contactId())) {
+            cmd.replyTo().tell(new ErrorResponse("Contact already exists"));
             return this;
         }
 
         List<String> updatedContacts = new ArrayList<>(user.contactIds());
-        updatedContacts.add(cmd.contactId);
+        updatedContacts.add(cmd.contactId());
         
         AppUser updatedUser = new AppUser(
             user.userId(),
@@ -160,17 +141,17 @@ public class UserManagerActor extends AbstractBehavior<UserManagerActor.Command>
             user.createdAt(),
             user.online()
         );
-        usersById.put(cmd.userId, updatedUser);
+        usersById.put(cmd.userId(), updatedUser);
         
-        cmd.replyTo.tell(new ContactAdded(cmd.userId, cmd.contactId));
+        cmd.replyTo().tell(new ContactAdded(cmd.userId(), cmd.contactId()));
         return this;
     }
 
-    private Behavior<Command> onGetContacts(GetContacts cmd) {
-        AppUser user = usersById.get(cmd.userId);
+    private Behavior<UserManagerCommand> onGetContacts(GetContacts cmd) {
+        AppUser user = usersById.get(cmd.userId());
         
         if (user == null) {
-            cmd.replyTo.tell(new ErrorResponse("User not found"));
+            cmd.replyTo().tell(new ErrorResponse("User not found"));
             return this;
         }
 
@@ -181,12 +162,12 @@ public class UserManagerActor extends AbstractBehavior<UserManagerActor.Command>
                     "Hey there! I'm using Beepit", u.online()))
                 .collect(Collectors.toList());
         
-        cmd.replyTo.tell(new ContactList(contacts));
+        cmd.replyTo().tell(new ContactList(contacts));
         return this;
     }
 
-    private Behavior<Command> onSetUserOnline(SetUserOnline cmd) {
-        AppUser user = usersById.get(cmd.userId);
+    private Behavior<UserManagerCommand> onSetUserOnline(SetUserOnline cmd) {
+        AppUser user = usersById.get(cmd.userId());
         if (user != null) {
             AppUser updatedUser = new AppUser(
                 user.userId(),
@@ -194,9 +175,9 @@ public class UserManagerActor extends AbstractBehavior<UserManagerActor.Command>
                 user.password(),
                 user.contactIds(),
                 user.createdAt(),
-                cmd.online
+                cmd.online()
             );
-            usersById.put(cmd.userId, updatedUser);
+            usersById.put(cmd.userId(), updatedUser);
         }
         return this;
     }

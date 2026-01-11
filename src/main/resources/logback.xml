@@ -1,5 +1,6 @@
 <configuration>
 
+    <!-- Console Appender con colores para desarrollo -->
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <withJansi>true</withJansi>
         <encoder>
@@ -7,12 +8,36 @@
         </encoder>
     </appender>
 
-    <root level="info">
+    <!-- JSON Appender estructurado para producción -->
+    <appender name="JSON_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/beepit-server.json</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>logs/beepit-server.%d{yyyy-MM-dd}.json.gz</fileNamePattern>
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcKeyName>userId</includeMdcKeyName>
+            <includeMdcKeyName>sessionId</includeMdcKeyName>
+            <includeMdcKeyName>conversationId</includeMdcKeyName>
+        </encoder>
+    </appender>
+
+    <!-- Root level -->
+    <root level="INFO">
         <appender-ref ref="STDOUT" />
+        <appender-ref ref="JSON_FILE" />
     </root>
     
+    <!-- Niveles por paquete -->
     <logger name="com.beepit.server" level="DEBUG"/>
+    <logger name="com.beepit.server.actor" level="DEBUG"/>
+    <logger name="com.beepit.server.websocket" level="DEBUG"/>
+    <logger name="com.beepit.server.controller" level="INFO"/>
+    
+    <!-- Bibliotecas externas -->
     <logger name="io.micronaut" level="INFO"/>
-    <logger name="io.netty" level="INFO"/>
+    <logger name="io.netty" level="WARN"/>
+    <logger name="akka" level="INFO"/>
+    <logger name="reactor" level="INFO"/>
 
 </configuration>
