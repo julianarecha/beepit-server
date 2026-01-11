@@ -1,0 +1,30 @@
+micronaut:
+  application:
+    name: beepitServer
+  server:
+    port: 8080
+    cors:
+      enabled: true
+      configurations:
+        web:
+          allowedOrigins:
+            - "*"
+          allowedMethods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+  security:
+    enabled: false
+
+jackson:
+  serialization:
+    writeDatesAsTimestamps: false
+  deserialization:
+    failOnUnknownProperties: false
+
+netty:
+  default:
+    allocator:
+      max-order: 3
