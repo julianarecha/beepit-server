@@ -102,13 +102,13 @@ Broadcast a todos los participantes
 ## Instalación y Ejecución
 
 ### Requisitos Previos
-- **JDK 21+** (Amazon Corretto 25 recomendado)
+- **JDK 25+** (Amazon Corretto 25 recomendado)
 - **Gradle 9.2.1** (incluido en wrapper)
 
 ### 1. Navegar al Directorio del Servidor
 
 ```bash
-cd d:\proyecto\mensajero\beepit-server
+cd ruta\al\directorio\beepit-server
 ```
 
 ### 2. Compilar el Servidor
