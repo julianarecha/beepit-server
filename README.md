@@ -22,6 +22,13 @@ Beepit es un mensajero moderno que permite comunicación 1-a-1 entre usuarios co
 - **Gradle 9.2.1** - Sistema de construcción
 - **JUnit 5 + Akka TestKit** - Testing
 
+## Clientes Compatibles
+
+Este backend funciona con:
+- ✅ **Cliente Kotlin Multiplatform** (Desktop, Android, Web)
+- ✅ **Cliente Web Thymeleaf** (navegador, `/test-chat`)
+- ✅ Cualquier cliente HTTP/WebSocket compatible
+
 ## Arquitectura
 
 ### Modelo de Actores (Akka)
@@ -95,13 +102,13 @@ Broadcast a todos los participantes
 ## Instalación y Ejecución
 
 ### Requisitos Previos
-- **JDK 25** (Amazon Corretto recomendado)
+- **JDK 21+** (Amazon Corretto 25 recomendado)
 - **Gradle 9.2.1** (incluido en wrapper)
 
-### 1. Clonar el Repositorio
+### 1. Navegar al Directorio del Servidor
 
 ```bash
-cd d:\proyecto\mensajero\beepit
+cd d:\proyecto\mensajero\beepit-server
 ```
 
 ### 2. Compilar el Servidor
@@ -128,9 +135,24 @@ Para ejecutar solo los tests:
 
 El servidor se iniciará en: `http://localhost:8080`
 
-### 4. Probar la Aplicación
+### 4. Verificar el Estado
 
-Abre tu navegador en: `http://localhost:8080/test-chat`
+Endpoints de health:
+- **HTTP**: `http://localhost:8080/health`
+- **WebSocket Test**: `http://localhost:8080/test-chat`
+
+### 5. Conectar Clientes
+
+**Cliente Kotlin Multiplatform:**
+```bash
+cd ..\beepit
+.\gradlew.bat run           # Desktop
+.\gradlew.bat installDebug  # Android
+.\gradlew.bat jsBrowserDevelopmentRun  # Web
+```
+
+**Cliente Web (Thymeleaf):**
+Navegar a: `http://localhost:8080/test-chat`
 
 ## Usuarios de Prueba
 
@@ -263,19 +285,25 @@ Content-Type: application/json
 GET /api/auth/conversations/{userId}
 ```
 
-**Respuesta**:
+**Respuesta** (formato actualizado para Kotlin client):
 ```json
 [
   {
-    "conversation": {
-      "conversationId": "conv-uuid",
-      "participants": ["alice-uuid", "bob-uuid"],
-      "messages": [
-        {
-          "messageId": "msg-uuid",
-          "senderId": "bob-uuid",
-          "recipientId": "alice-uuid",
-          "content": "Hola Alice!",
+    "conversationId": "alice-uuid_bob-uuid",
+    "otherUserId": "bob-uuid",
+    "isContact": true,
+    "unreadCount": 2,
+    "lastMessage": "Hola Alice!"
+  }
+]
+```
+
+**Descripción de campos**:
+- `conversationId`: ID único de la conversación (formato: userId1_userId2 ordenados)
+- `otherUserId`: ID del otro participante
+- `isContact`: true si es contacto, false si es mensaje de no-contacto
+- `unreadCount`: Cantidad de mensajes no leídos
+- `lastMessage`: Último mensaje de la conversación (puede ser null)
           "timestamp": "2024-01-15T10:35:00Z",
           "delivered": true,
           "read": false
@@ -300,13 +328,35 @@ GET /api/auth/conversations/{userId}
 
 ### Conexión
 
-```javascript
-const socket = new WebSocket(`ws://localhost:8080/chat/${userId}/${contactId}`);
+**Formato de URL:**
+```
+ws://localhost:8080/ws/chat/{roomId}?userId={userId}&username={username}
 ```
 
 **Parámetros**:
-- `userId`: ID del usuario actual
-- `contactId`: ID del contacto con quien chatear
+- `roomId`: ID de la sala de chat (formato: `userId1_userId2` ordenados alfabéticamente)
+- `userId`: ID del usuario actual (query param)
+- `username`: Nombre del usuario (query param)
+
+**Ejemplo desde JavaScript:**
+```javascript
+const roomId = "alice-uuid_bob-uuid";
+const socket = new WebSocket(
+  `ws://localhost:8080/ws/chat/${roomId}?userId=alice-uuid&username=alice`
+);
+```
+
+**Ejemplo desde Kotlin (Cliente Multiplatform):**
+```kotlin
+val roomId = listOf(userId1, userId2).sorted().joinToString("_")
+wsManager.connect(
+    roomId = roomId,
+    userId = currentUserId,
+    username = currentUsername
+)
+```
+
+**Nota Android**: El emulador debe usar `ws://10.0.2.2:8080` en lugar de `ws://localhost:8080`
 
 ### Eventos
 
@@ -342,15 +392,21 @@ socket.onmessage = (event) => {
 ```
 
 #### Enviar mensaje
+
+**Desde JavaScript:**
 ```javascript
 const message = {
-  senderId: currentUserId,
-  recipientId: contactId,
   content: messageText
 };
-
 socket.send(JSON.stringify(message));
 ```
+
+**Desde Kotlin:**
+```kotlin
+wsManager.sendMessage("Hola!")
+```
+
+**Nota**: Solo se envía el contenido. El servidor agrega automáticamente senderId, recipientId, messageId y timestamp.
 
 #### onerror - Manejo de errores
 ```javascript
@@ -371,8 +427,6 @@ socket.onclose = () => {
 #### Mensaje Nuevo (Cliente → Servidor)
 ```json
 {
-  "senderId": "alice-uuid",
-  "recipientId": "bob-uuid",
   "content": "Hola Bob!"
 }
 ```
@@ -380,6 +434,8 @@ socket.onclose = () => {
 #### Mensaje Nuevo (Servidor → Cliente)
 ```json
 {
+  "type": "message",
+  "messageId": "uuid-generado",
   "senderId": "alice-uuid",
   "recipientId": "bob-uuid",
   "content": "Hola Bob!",
@@ -393,10 +449,13 @@ socket.onclose = () => {
   "type": "history",
   "messages": [
     {
+      "messageId": "msg-uuid-1",
       "senderId": "bob-uuid",
       "recipientId": "alice-uuid",
       "content": "Hola Alice!",
-      "timestamp": "2024-01-15T10:30:00.456Z"
+      "timestamp": "2024-01-15T10:30:00.456Z",
+      "delivered": true,
+      "read": false
     }
   ]
 }
